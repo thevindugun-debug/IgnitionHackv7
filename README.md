@@ -181,6 +181,16 @@ interrupted run costs nothing.
 - **PRODES covers clear-cut deforestation in the Brazilian Amazon.** It does not capture
   degradation, and another region needs another source.
 - **The observation window ends in 2023**, the last complete PRODES year at collection time.
+- **Four project footprints are withheld, not audited.** Tucumã, Castanheira, Serra Verde and
+  Campos Lindos have clearing recorded against them from before the window that meets or exceeds
+  their own land area — a bounding-box straddling artefact — so their standing forest computes to
+  zero and every loss ratio would divide by it. Left alone that surfaces as `0.0%` observed loss,
+  which reads as forest nobody ever touched, and it previously carried these projects all the way
+  to a published risk band. `parcelBaselineProblem` in `src/baseline.js` now refuses them, the
+  panel explains why instead of printing a verdict, and they are excluded from the portfolio
+  total. `npm run check` asserts both that each withheld parcel genuinely carries the artefact and
+  that the guard is not swallowing healthy ones. Fixing this properly means re-measuring footprints
+  against clipped geometry rather than bounding boxes.
 
 ## Not built
 

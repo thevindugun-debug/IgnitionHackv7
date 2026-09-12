@@ -17,7 +17,7 @@ import {
 } from "./actors.js";
 import {
   COVARIATES, matchControls, counterfactual,
-  auditBaseline, divergenceTimeline, lossFraction, portfolioExposure,
+  auditBaseline, divergenceTimeline, lossFraction, parcelBaselineProblem, portfolioExposure,
 } from "./baseline.js";
 // Shared with the exported report, so a reader checking the PDF against this
 // screen is comparing the same roundings rather than two of them.
@@ -35,7 +35,11 @@ export function auditFor(project, cells, window) {
   const audit = auditBaseline(project, cf);
   const timeline = divergenceTimeline(project, matches, window);
   const observedInside = lossFraction(project.parcel, window[0], window[1]);
-  return { host, matches, considered, cf, audit, timeline, observedInside };
+  // Checked last and carried alongside the numbers rather than replacing them:
+  // the figures are still computed for anything that wants to inspect them, but
+  // a refusal present here means the panel must not present them as measured.
+  const refusal = parcelBaselineProblem(project.parcel, window[0]);
+  return { host, matches, considered, cf, audit, timeline, observedInside, refusal };
 }
 
 /** The audit for any project in a region, by id — used for a verifier's whole portfolio. */
@@ -62,7 +66,7 @@ function Verification({ result, phase, ticked }) {
 
 /* ── results ─────────────────────────────────────────────────────────────── */
 function Results({ project, result, year, snapshotMap, region }) {
-  const { audit, cf, timeline, observedInside } = result;
+  const { audit, cf, timeline, observedInside, refusal } = result;
   const { PROJECTS, CELLS, REGION } = region;
   const window = REGION.window;
   const referencePeriod = REGION.referencePeriod;
@@ -87,6 +91,33 @@ function Results({ project, result, year, snapshotMap, region }) {
     [project.id, auditById]
   );
 
+  // A refusal replaces the whole result, and deliberately not just the one row
+  // that would have read wrong. Every figure below — the multiple, the benefit,
+  // the credits unsupported, the money — is derived from the project's own
+  // observed loss, so if that cannot be measured then none of them can be shown
+  // as though it had been. Saying so plainly is the honest output; a panel of
+  // numbers with one caveat in it is not.
+  if (refusal) {
+    return (
+      <div className="sec">
+        <div className="headline-k">Cannot be verified</div>
+        <div className="headline-none">No measurable baseline</div>
+        <div className="verdict">{refusal}</div>
+        <div className="verdict-sub">
+          Phantom will not publish a verdict for this project. Reporting it as {pct(0, 2)} loss
+          would read as untouched forest, which is the opposite of what the record supports —
+          so the project is withheld until its footprint is re-measured against clipped
+          geometry rather than a bounding box.
+        </div>
+        <div className="notice" style={{ marginTop: 10 }}>
+          The {result.matches.length} matched parcels and the comparable-land figure of{" "}
+          {pct(audit.independent, 2)} over {window[0]}–{window[1]} are unaffected — it is this
+          project&rsquo;s own footprint that cannot be measured, not the land it would be
+          compared against.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -440,10 +471,21 @@ export function ProjectList({ onSelect, region }) {
   // Every project in the region audited on the same terms, rolled into one
   // total. Computed here rather than stored, so the total can never drift from
   // the per-project figures a reader gets by opening the rows underneath it.
-  const rows = useMemo(() => PROJECTS
-    .map((p) => ({ p, audit: auditFor(p, CELLS, REGION.window).audit }))
-    .sort((a, b) => b.audit.valueUnsupported - a.audit.valueUnsupported),
+  //
+  // Projects whose footprint has no measurable baseline are held out of both the
+  // rows and the total. Their observed loss would come back as 0, which the
+  // arithmetic reads as forest that was never cleared — so leaving them in would
+  // quietly inflate the portfolio's unsupported value with the one figure this
+  // tool is least entitled to assert. The count is shown instead, so a reader
+  // can see the total is over fewer projects than the region holds.
+  const audited = useMemo(() => PROJECTS
+    .map((p) => ({ p, ...auditFor(p, CELLS, REGION.window) })),
     [PROJECTS, CELLS, REGION.window]);
+  const rows = useMemo(() => audited
+    .filter((r) => !r.refusal)
+    .sort((a, b) => b.audit.valueUnsupported - a.audit.valueUnsupported),
+    [audited]);
+  const withheld = useMemo(() => audited.filter((r) => r.refusal), [audited]);
   const portfolio = useMemo(() => portfolioExposure(rows.map((r) => r.audit)), [rows]);
 
   return (
@@ -460,6 +502,10 @@ export function ProjectList({ onSelect, region }) {
               similar land. </>
             )}
             {portfolio.worstMultiple != null && <>Widest single overstatement {multiple(portfolio.worstMultiple)}.</>}
+            {withheld.length > 0 && (
+              <> {withheld.length} further {withheld.length === 1 ? "project is" : "projects are"} withheld:
+              their footprints have no measurable forest baseline, so no verdict is published for them.</>
+            )}
           </div>
         </div>
       </div>

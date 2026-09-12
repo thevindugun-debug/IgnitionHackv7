@@ -3,7 +3,7 @@
 import assert from "node:assert";
 import {
   COVARIATES, WINDOW, REFERENCE_PERIOD, matchControls, counterfactual, auditBaseline,
-  divergenceTimeline, lossFraction, forestAt, clearedBetween, RISK_BANDS,
+  divergenceTimeline, lossFraction, forestAt, clearedBetween, parcelBaselineProblem, RISK_BANDS,
 } from "./baseline.js";
 import { CASE_STUDIES, validateCaseStudy } from "./caseStudies.js";
 import { ACTORS, PARTIES, buildLedger, purchaseRows, verifierRecord } from "./actors.js";
@@ -58,12 +58,24 @@ console.log("internal illustrative Forest Explorer project audits");
 console.log("id       project                      claimed  independent  risk        controls  flagged");
 const seen = new Set();
 const bandsHit = new Set();
+const withheld = [];
 for (const p of PROJECTS) {
   assert(!seen.has(p.id), `duplicate project id ${p.id}`);
   seen.add(p.id);
   assert(p.parcel?.clearedByYear, `${p.id}: no measured footprint`);
   assert(p.claimedBaselineLoss > 0 && p.claimedBaselineLoss < 1, `${p.id}: implausible baseline`);
   assert(p.creditsRetired <= p.creditsIssued, `${p.id}: retired exceeds issued`);
+
+  // A parcel with no measurable baseline is withheld rather than audited. It is
+  // recorded and printed, not skipped silently — a project that disappears from
+  // this table with no line explaining why is how the artefact stayed invisible
+  // in the first place.
+  const problem = parcelBaselineProblem(p.parcel, WINDOW[0]);
+  if (problem) {
+    withheld.push({ id: p.id, name: p.shortName, problem });
+    console.log(`${p.id}  ${p.shortName.padEnd(26)} ${"withheld".padStart(7)}  ${"— no measurable baseline".padStart(11)}`);
+    continue;
+  }
   // The panel renders a parties block and a credit ledger for every project, so
   // a project the generator added but actors.js never heard of ships as a hole
   // in the panel. Fail here instead, where the fix is one line in actors.js.
@@ -158,6 +170,36 @@ for (const p of PROJECTS) {
       (tl.firstFlagYear ?? "—")
   );
 }
+
+// ── nothing is audited on a denominator of zero ────────────────────────────
+// The guard is only worth having if it fires for a real reason and only for a
+// real reason, so both directions are asserted: every withheld project must
+// genuinely carry the footprint artefact, and the pool must not be mostly
+// withheld — a guard that swallows the dataset is a broken guard, not a strict
+// one.
+for (const w of withheld) {
+  const p = PROJECTS.find((x) => x.id === w.id);
+  assert(
+    p.parcel.preClearedKm2 > p.parcel.landKm2 || !(forestAt(p.parcel, WINDOW[0]) > 0),
+    `${w.id}: withheld without a measurable cause — the guard is firing on a healthy parcel`
+  );
+  // The reason this bug is dangerous: the number it would otherwise print is 0,
+  // which reads as forest that was never touched.
+  assert(
+    lossFraction(p.parcel, WINDOW[0], WINDOW[1]) === 0,
+    `${w.id}: expected the broken denominator to surface as 0.0% loss`
+  );
+}
+assert(
+  withheld.length < PROJECTS.length / 2,
+  `${withheld.length} of ${PROJECTS.length} projects withheld — the baseline guard is too aggressive`
+);
+console.log(
+  withheld.length
+    ? `\n${withheld.length} project(s) withheld, not audited: ${withheld.map((w) => w.name).join(", ")}` +
+        ` — prior clearing exceeds parcel land area, so standing forest computes to zero`
+    : "\nno projects withheld — every footprint carries a measurable baseline"
+);
 
 // ── the map frames every project, and reaches every parcel ─────────────────
 // Three boxes, nested, each answering a different question.

@@ -50,6 +50,44 @@ export function lossPath(cell, [from, to] = WINDOW) {
   return out;
 }
 
+/**
+ * Why a parcel cannot carry a measured loss ratio, or null if it can.
+ *
+ * `lossFraction` returns 0 when the forest standing at the start of the window
+ * is zero, because there is no denominator to divide by. Zero is the worst
+ * possible thing to return here: on screen it reads as a parcel that lost none
+ * of its forest — pristine, perfectly protected — when what actually happened is
+ * that the measurement is unavailable. An error that points that direction
+ * flatters the project under scrutiny, which is the one direction this tool must
+ * never fail in.
+ *
+ * Two footprints in the shipped pool hit it. Tucumã and Castanheira have prior
+ * clearing recorded as larger than their own land area — the bounding-box
+ * straddling artefact the README documents — so their 2008 forest computes to
+ * zero and every later ratio divides by it. The Python engine already refuses
+ * these units in `_validate_treated_unit`; this is the same refusal for the app,
+ * so the two sides of the project cannot disagree about which parcels are
+ * measurable.
+ *
+ * Returns a reason string meant to be shown to the reader, not a boolean, so the
+ * panel can say what went wrong instead of silently hiding the project.
+ */
+export function parcelBaselineProblem(cell, from = WINDOW[0]) {
+  if (!cell) return "No measured footprint for this project.";
+  if (!(cell.landKm2 > 0)) return "The parcel has no recorded land area.";
+  if (cell.preClearedKm2 > cell.landKm2) {
+    return (
+      "Recorded clearing before the window is larger than the parcel's own land area, " +
+      "so its standing forest computes to zero and every loss ratio would divide by it. " +
+      "This is a footprint artefact, not a measurement."
+    );
+  }
+  if (!(forestAt(cell, from) > 0)) {
+    return `No forest is recorded as standing at the start of ${from}, so there is nothing to measure loss against.`;
+  }
+  return null;
+}
+
 // ── covariates ─────────────────────────────────────────────────────────────
 // Every one of these is knowable before the observation window opens. That is
 // what makes the controls a fair comparison rather than a circular one.
